@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+config/.env
+*.mp4
+output/
+dist/
+.pytest_cache/
+
+# 本機工具設定,不入版控
+.claude/
+.mcp.json
