@@ -5,6 +5,7 @@ xAI Grok API 客戶端(OpenAI 相容)
   POST /images/generations   — Grok Imagine 圖片生成
   POST /videos/generations   — Grok Imagine 影片生成(非同步)
   GET  /videos/{request_id}  — 影片狀態輪詢
+  POST /tts                  — Voice API 文字轉語音(回傳原始音訊 bytes)
   GET  /models               — 模型列表
 """
 
@@ -15,8 +16,12 @@ import requests
 from ..config.settings import (
     HTTP_STATUS_HINTS,
     MAX_IMAGES_PER_REQUEST,
+    MAX_TTS_TEXT_LENGTH,
     MAX_VIDEO_DURATION_SEC,
     REQUEST_TIMEOUT,
+    TTS_OUTPUT_FORMAT,
+    TTS_SPEED_MAX,
+    TTS_SPEED_MIN,
     VIDEO_POLL_INTERVAL,
     VIDEO_POLL_TIMEOUT,
     get_api_key,
@@ -227,6 +232,47 @@ class GrokAPI:
                         f.write(chunk)
         except requests.RequestException as e:
             raise GrokAPIError(f"下載 {url} 失敗: {e}")
+
+    # ------------------------------------------------------------------
+    # TTS(Voice API)
+    # ------------------------------------------------------------------
+    def tts(self, text: str, voice_id: str = "eve", language: str = "auto",
+            speed: float = 1.0, output_format: dict = None) -> bytes:
+        """文字轉語音,回傳原始音訊 bytes(不落地,由呼叫端決定去向)"""
+        if len(text) > MAX_TTS_TEXT_LENGTH:
+            raise GrokAPIError(
+                f"TTS 文字 {len(text)} 字元,超過上限 {MAX_TTS_TEXT_LENGTH}")
+        if not TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX:
+            raise GrokAPIError(
+                f"speed 必須介於 {TTS_SPEED_MIN}~{TTS_SPEED_MAX},收到 {speed}")
+
+        payload = {
+            "text": text,
+            "voice_id": voice_id,
+            "language": language,
+            "speed": speed,
+            "output_format": output_format or TTS_OUTPUT_FORMAT,
+        }
+        url = f"{self.base_url}/tts"
+        try:
+            resp = requests.post(url, headers=self._headers(), json=payload,
+                                 timeout=self.timeout)
+        except requests.RequestException as e:
+            raise GrokAPIError(f"連線 xAI TTS 失敗: {e}")
+
+        if resp.status_code >= 400:
+            detail = ""
+            try:
+                body = resp.json()
+                err = body.get("error", body)
+                detail = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            except Exception:
+                detail = resp.text[:300]
+            raise GrokAPIError(f"POST /tts 失敗: {detail}", status=resp.status_code)
+
+        if not resp.content:
+            raise GrokAPIError("TTS 回應為空")
+        return resp.content
 
     # ------------------------------------------------------------------
     # 模型列表

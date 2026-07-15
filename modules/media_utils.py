@@ -106,21 +106,81 @@ def items_to_image_batch(items: list):
 
 
 # ----------------------------------------------------------------------
-# 影片輸出
+# 音訊:bytes → ComfyUI AUDIO dict(不落地)
 # ----------------------------------------------------------------------
-def get_output_dir(subfolder: str = "grok") -> str:
-    """ComfyUI output 目錄下的子資料夾;不在 ComfyUI 環境時退回套件內 output/"""
+def audio_bytes_to_comfyui(data: bytes) -> dict:
+    """
+    WAV/MP3 bytes 在記憶體解碼成 AUDIO dict {waveform:[B,C,S], sample_rate}。
+    優先 torchaudio(ComfyUI 內建),WAV 另有 stdlib wave 保底。
+    """
+    import io
+
+    try:
+        import torchaudio
+        waveform, sample_rate = torchaudio.load(io.BytesIO(data))
+        return {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+    except Exception as e:
+        print(f"⚠️ torchaudio 解碼失敗,改用 wave 保底: {e}")
+
+    import wave
+
+    import numpy as np
+    import torch
+
+    with wave.open(io.BytesIO(data), "rb") as wf:
+        sample_rate = wf.getframerate()
+        channels = wf.getnchannels()
+        width = wf.getsampwidth()
+        frames = wf.readframes(wf.getnframes())
+
+    if width == 2:
+        arr = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    elif width == 4:
+        arr = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"不支援的 WAV 位寬: {width * 8} bit")
+
+    arr = arr.reshape(-1, channels).T  # [C, S]
+    waveform = torch.from_numpy(arr.copy()).unsqueeze(0)  # [1, C, S]
+    return {"waveform": waveform, "sample_rate": sample_rate}
+
+
+# ----------------------------------------------------------------------
+# 影片暫存
+# 注意:下載只進 temp,不寫 output/——保存交給下游 Save Video 節點,
+# 避免與使用者工作流中的 Save 節點重複落地。
+# ----------------------------------------------------------------------
+def get_temp_dir(subfolder: str = "grok") -> str:
+    """ComfyUI temp 目錄下的子資料夾;不在 ComfyUI 環境時退回套件內 temp/"""
     try:
         import folder_paths
-        base = folder_paths.get_output_directory()
+        base = folder_paths.get_temp_directory()
     except Exception:
-        base = os.path.join(PLUGIN_DIR, "output")
+        base = os.path.join(PLUGIN_DIR, "temp")
     path = os.path.join(base, subfolder)
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def make_video_path(prefix: str = "grok_video", ext: str = "mp4") -> str:
-    """在輸出資料夾產生帶時間戳的影片路徑"""
+def make_video_temp_path(prefix: str = "grok_video", ext: str = "mp4") -> str:
+    """在暫存資料夾產生帶時間戳的影片路徑"""
     filename = f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.{ext}"
-    return os.path.join(get_output_dir(), filename)
+    return os.path.join(get_temp_dir(), filename)
+
+
+def wrap_video(path: str):
+    """
+    把影片檔包成 ComfyUI 核心 VIDEO 型別,可直接接 Save Video / Preview Video。
+    不在 ComfyUI 環境(如 CI)時回傳 None。
+    """
+    try:
+        from comfy_api.latest import InputImpl
+        return InputImpl.VideoFromFile(path)
+    except Exception:
+        pass
+    try:  # 舊版 ComfyUI 路徑
+        from comfy_api.input_impl import VideoFromFile
+        return VideoFromFile(path)
+    except Exception as e:
+        print(f"⚠️ 無法建立 VIDEO 物件(非 ComfyUI 環境?): {e}")
+        return None

@@ -49,7 +49,7 @@ def _media_module():
 def test_node_mappings(pkg):
     assert set(pkg.NODE_CLASS_MAPPINGS) == {
         "GrokChatNode", "GrokVisionNode", "GrokImageGenNode",
-        "GrokVideoGenNode", "GrokListModelsNode",
+        "GrokVideoGenNode", "GrokTTSNode", "GrokListModelsNode",
     }
     assert set(pkg.NODE_DISPLAY_NAME_MAPPINGS) == set(pkg.NODE_CLASS_MAPPINGS)
 
@@ -65,8 +65,20 @@ def test_categories(pkg):
     cats = {c.CATEGORY for c in pkg.NODE_CLASS_MAPPINGS.values()}
     assert cats == {
         "AI/Grok/chat", "AI/Grok/vision", "AI/Grok/image",
-        "AI/Grok/video", "AI/Grok/utils",
+        "AI/Grok/video", "AI/Grok/audio", "AI/Grok/utils",
     }
+
+
+def test_generation_nodes_do_not_save(pkg):
+    """生成節點輸出型別交給下游 Save 節點,不得是 OUTPUT_NODE(避免重複保存)"""
+    video = pkg.NODE_CLASS_MAPPINGS["GrokVideoGenNode"]
+    audio = pkg.NODE_CLASS_MAPPINGS["GrokTTSNode"]
+    image = pkg.NODE_CLASS_MAPPINGS["GrokImageGenNode"]
+    assert video.RETURN_TYPES[0] == "VIDEO"
+    assert audio.RETURN_TYPES == ("AUDIO",)
+    assert image.RETURN_TYPES == ("IMAGE",)
+    for cls in (video, audio, image):
+        assert not getattr(cls, "OUTPUT_NODE", False)
 
 
 # ----------------------------------------------------------------------
@@ -95,6 +107,16 @@ def test_submit_video_rejects_bad_duration(pkg):
     client = api.GrokAPI(api_key="dummy-key")
     with pytest.raises(api.GrokAPIError):
         client.submit_video("test", "grok-imagine-video-1.5", duration=16)
+
+
+def test_tts_rejects_long_text_and_bad_speed(pkg):
+    """超過 15000 字元或 speed 超界須在送出前就拋 GrokAPIError(不打網路)"""
+    api = _api_module()
+    client = api.GrokAPI(api_key="dummy-key")
+    with pytest.raises(api.GrokAPIError):
+        client.tts("好" * 15001)
+    with pytest.raises(api.GrokAPIError):
+        client.tts("hello", speed=1.6)
 
 
 def test_error_status_hint(pkg):

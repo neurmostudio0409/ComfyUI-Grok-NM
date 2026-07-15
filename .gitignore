@@ -3,7 +3,7 @@ __pycache__/
 .env
 config/.env
 *.mp4
-output/
+temp/
 dist/
 .pytest_cache/
 

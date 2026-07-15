@@ -41,6 +41,7 @@ CATEGORY_CHAT = "AI/Grok/chat"
 CATEGORY_VISION = "AI/Grok/vision"
 CATEGORY_IMAGE = "AI/Grok/image"
 CATEGORY_VIDEO = "AI/Grok/video"
+CATEGORY_AUDIO = "AI/Grok/audio"
 CATEGORY_UTILS = "AI/Grok/utils"
 
 # ----------------------------------------------------------------------
@@ -66,6 +67,18 @@ VIDEO_MODELS = [
     "grok-imagine-video-1.5",  # $0.08/秒
     "grok-imagine-video",      # $0.05/秒,支援參考圖工作流
 ]
+
+# ----------------------------------------------------------------------
+# TTS(Voice API,POST /tts 回傳原始音訊 bytes)
+# ----------------------------------------------------------------------
+TTS_VOICES = ["eve", "ara", "leo", "rex", "sal"]  # 內建聲音,custom voice 填自訂欄位
+MAX_TTS_TEXT_LENGTH = 15000
+TTS_SPEED_MIN = 0.7
+TTS_SPEED_MAX = 1.5
+
+# 要求 WAV 方便在記憶體直接解碼成 AUDIO tensor(不落地)。
+# 若 API 回 400/422 表示欄位名稱有異動,依 docs.x.ai TTS output_format 章節調整。
+TTS_OUTPUT_FORMAT = {"codec": "wav", "sample_rate": 24000}
 
 # ----------------------------------------------------------------------
 # 限制(送出前就在本地擋下,不浪費 API 呼叫)

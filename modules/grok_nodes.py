@@ -5,13 +5,18 @@ xAI Grok ComfyUI 節點
   AI/Grok/vision — GrokVisionNode
   AI/Grok/image  — GrokImageGenNode
   AI/Grok/video  — GrokVideoGenNode
+  AI/Grok/audio  — GrokTTSNode
   AI/Grok/utils  — GrokListModelsNode
+
+設計原則:生成節點一律輸出型別(IMAGE / VIDEO / AUDIO),不自行寫檔——
+保存交給下游 Save Image / Save Video / Save Audio,避免重複落地。
 """
 
 import os
 
 from ..config.settings import (
     ASPECT_RATIOS,
+    CATEGORY_AUDIO,
     CATEGORY_CHAT,
     CATEGORY_IMAGE,
     CATEGORY_UTILS,
@@ -20,7 +25,11 @@ from ..config.settings import (
     DEFAULT_CHAT_MODELS,
     IMAGE_MODELS,
     MAX_IMAGES_PER_REQUEST,
+    MAX_TTS_TEXT_LENGTH,
     MAX_VIDEO_DURATION_SEC,
+    TTS_SPEED_MAX,
+    TTS_SPEED_MIN,
+    TTS_VOICES,
     VIDEO_MODELS,
     VIDEO_POLL_TIMEOUT,
     VIDEO_RESOLUTIONS,
@@ -286,11 +295,11 @@ class GrokVideoGenNode:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("video_path", "video_url")
+    # 只輸出 VIDEO 交給下游 Save Video / Preview Video,本節點不寫 output/
+    RETURN_TYPES = ("VIDEO", "STRING")
+    RETURN_NAMES = ("video", "video_url")
     FUNCTION = "generate"
     CATEGORY = CATEGORY_VIDEO
-    OUTPUT_NODE = True
 
     def generate(self, prompt, model, duration=6, first_frame=None,
                  aspect_ratio="(預設)", resolution="(預設)",
@@ -317,14 +326,80 @@ class GrokVideoGenNode:
             print(f"🚀 影片任務已送出 request_id={request_id}")
 
             url = api.poll_video(request_id, timeout=poll_timeout)
-            dest = media_utils.make_video_path()
+            dest = media_utils.make_video_temp_path()
             api.download(url, dest)
+            video = media_utils.wrap_video(dest)
 
             print("=" * 60)
             print("✅ 影片生成完成!")
-            print(f"📁 輸出: {dest}")
+            print(f"📁 暫存: {dest}(保存請接 Save Video 節點)")
             print("=" * 60)
-            return (dest, url)
+            return (video, url)
+        except ValueError as e:
+            _print_api_key_help()
+            raise RuntimeError(str(e)) from e
+        except GrokAPIError as e:
+            raise RuntimeError(str(e)) from e
+
+
+# ======================
+# 音訊節點
+# ======================
+
+class GrokTTSNode:
+    """ComfyUI 節點:Grok Voice 文字轉語音(記憶體解碼,不落地)"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "tooltip": f"要合成的文字(上限 {MAX_TTS_TEXT_LENGTH} 字元,可含 speech tags)",
+                }),
+                "voice_id": (TTS_VOICES, {
+                    "default": "eve",
+                    "tooltip": "內建聲音;要用 custom voice 請填下方 custom_voice_id",
+                }),
+            },
+            "optional": {
+                "custom_voice_id": ("STRING", {
+                    "default": "",
+                    "tooltip": "自訂聲音 id(留空則用上方下拉選單)",
+                }),
+                "language": ("STRING", {
+                    "default": "auto",
+                    "tooltip": "BCP-47 語言代碼,auto = 自動偵測(中文可用 zh-TW)",
+                }),
+                "speed": ("FLOAT", {
+                    "default": 1.0, "min": TTS_SPEED_MIN, "max": TTS_SPEED_MAX,
+                    "step": 0.05,
+                    "tooltip": f"語速 {TTS_SPEED_MIN}~{TTS_SPEED_MAX}",
+                }),
+            },
+        }
+
+    # 只輸出 AUDIO 交給下游 Save Audio / Preview Audio,本節點不寫檔
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "synthesize"
+    CATEGORY = CATEGORY_AUDIO
+
+    def synthesize(self, text, voice_id, custom_voice_id="", language="auto",
+                   speed=1.0):
+        try:
+            api = GrokAPI()
+            data = api.tts(
+                text,
+                voice_id=custom_voice_id.strip() or voice_id,
+                language=language,
+                speed=speed,
+            )
+            audio = media_utils.audio_bytes_to_comfyui(data)
+            dur = audio["waveform"].shape[-1] / audio["sample_rate"]
+            print(f"✅ TTS 完成({dur:.1f} 秒,保存請接 Save Audio 節點)")
+            return (audio,)
         except ValueError as e:
             _print_api_key_help()
             raise RuntimeError(str(e)) from e
@@ -381,6 +456,7 @@ NODE_CLASS_MAPPINGS = {
     "GrokVisionNode": GrokVisionNode,
     "GrokImageGenNode": GrokImageGenNode,
     "GrokVideoGenNode": GrokVideoGenNode,
+    "GrokTTSNode": GrokTTSNode,
     "GrokListModelsNode": GrokListModelsNode,
 }
 
@@ -389,5 +465,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GrokVisionNode": "Grok Vision 視覺理解 (xAI)",
     "GrokImageGenNode": "Grok Imagine 圖片生成 (xAI)",
     "GrokVideoGenNode": "Grok Imagine 影片生成 (xAI)",
+    "GrokTTSNode": "Grok Voice 文字轉語音 (xAI)",
     "GrokListModelsNode": "Grok 模型列表 (xAI)",
 }
