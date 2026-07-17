@@ -29,9 +29,12 @@ def _load_package():
 
 @pytest.fixture(scope="module")
 def pkg():
-    # 確保測試不受本機 .env 影響
+    # 確保測試不受本機 .env 影響:套件載入時 load_env() 會把 .env 的
+    # key 塞進環境,所以要在載入「後」再 pop 一次
     os.environ.pop("XAI_API_KEY", None)
-    return _load_package()
+    mod = _load_package()
+    os.environ.pop("XAI_API_KEY", None)
+    return mod
 
 
 def _api_module():
@@ -117,6 +120,28 @@ def test_tts_rejects_long_text_and_bad_speed(pkg):
         client.tts("好" * 15001)
     with pytest.raises(api.GrokAPIError):
         client.tts("hello", speed=1.6)
+
+
+def test_submit_video_image_payload_is_imageurl_struct(pkg):
+    """圖生影片的 image 欄位必須是 {"url": ...} 結構(xAI 422 實測)"""
+    api = _api_module()
+    client = api.GrokAPI(api_key="dummy-key")
+    captured = {}
+
+    def fake_request(method, path, payload=None, timeout=None):
+        captured.update(payload)
+        return {"request_id": "rid-1"}
+
+    client._request = fake_request
+    rid = client.submit_video("t", "grok-imagine-video",
+                              image_data_url="data:image/png;base64,QUJD",
+                              duration=1)
+    assert rid == "rid-1"
+    assert captured["image"] == {"url": "data:image/png;base64,QUJD"}
+    # 純文生影片不帶 image 欄位
+    captured.clear()
+    client.submit_video("t", "grok-imagine-video", duration=1)
+    assert "image" not in captured
 
 
 def test_error_status_hint(pkg):

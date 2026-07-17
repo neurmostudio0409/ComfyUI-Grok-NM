@@ -187,7 +187,9 @@ class GrokAPI:
 
         payload = {"model": model, "prompt": prompt, "duration": duration}
         if image_data_url:
-            payload["image"] = image_data_url  # URL 或 data:image/png;base64,...
+            # xAI 要求 ImageUrl 結構(2026-07-17 實測 422:
+            # "expected struct ImageUrl"),不能送純字串
+            payload["image"] = {"url": image_data_url}
         if aspect_ratio:
             payload["aspect_ratio"] = aspect_ratio
         if resolution:

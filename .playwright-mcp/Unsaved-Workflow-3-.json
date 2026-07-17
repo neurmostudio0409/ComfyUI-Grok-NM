@@ -1,0 +1,50 @@
+{
+  "2": {
+    "inputs": {
+      "prompt": "將怪物替換給老男人",
+      "model": "grok-imagine-video-1.5",
+      "duration": 6,
+      "aspect_ratio": "(預設)",
+      "resolution": "(預設)",
+      "poll_timeout": 600,
+      "first_frame": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "GrokVideoGenNode",
+    "_meta": {
+      "title": "Grok Imagine 影片生成 (xAI)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image_paths": "Hell_Knight_29.webp\n老年人-与退休者-可爱的亚洲老人夫妇在公园里拥抱-196941196.webp",
+      "width": 0,
+      "height": 0,
+      "interpolation": "lanczos",
+      "resize_method": "keep proportion",
+      "multiple_of": 32,
+      "img_compression": 18
+    },
+    "class_type": "MultiImageLoader",
+    "_meta": {
+      "title": "Multi Image Loader"
+    }
+  }
+}
