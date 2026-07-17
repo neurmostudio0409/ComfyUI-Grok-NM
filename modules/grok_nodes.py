@@ -349,10 +349,21 @@ class GrokVideoRefsNode:
     參考圖影響風格與內容但不強制第一幀;僅 grok-imagine-video 支援
     """
 
+    # 單一孔位吃多圖:INPUT_IS_LIST 讓 reference_images 以「list」進來——
+    # 上游是同尺寸 batch 時 list 只有一個 tensor(取全部幀);
+    # 上游是 image list(GrokImageListNode / Impact Make Image List 等
+    # OUTPUT_IS_LIST 節點)時,list 內多個 tensor 尺寸可各自不同。
+    INPUT_IS_LIST = True
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "reference_images": ("IMAGE", {
+                    "tooltip": "參考圖(單一孔位):同尺寸 batch 直接接;"
+                               "不同尺寸多圖請經「Grok 參考圖打包」或 "
+                               f"Make Image List 打包後接入(總上限 {MAX_REFERENCE_IMAGES} 張)",
+                }),
                 "prompt": ("STRING", {
                     "default": "",
                     "multiline": True,
@@ -364,15 +375,6 @@ class GrokVideoRefsNode:
                 }),
             },
             "optional": {
-                # 每張參考圖一個獨立輸入孔:不同尺寸的圖不用先合批
-                # (ComfyUI IMAGE batch 要求同尺寸,上游合批失敗會吐黑圖)
-                "ref_image_1": ("IMAGE", {"tooltip": "參考圖 1(單獨輸入,尺寸不限)"}),
-                "ref_image_2": ("IMAGE", {"tooltip": "參考圖 2"}),
-                "ref_image_3": ("IMAGE", {"tooltip": "參考圖 3"}),
-                "ref_image_4": ("IMAGE", {"tooltip": "參考圖 4"}),
-                "reference_images": ("IMAGE", {
-                    "tooltip": f"(可選)同尺寸參考圖 batch,與上面併用,總上限 {MAX_REFERENCE_IMAGES} 張",
-                }),
                 "aspect_ratio": (["(預設)"] + ASPECT_RATIOS, {
                     "default": "(預設)",
                 }),
@@ -392,35 +394,33 @@ class GrokVideoRefsNode:
     FUNCTION = "generate"
     CATEGORY = CATEGORY_VIDEO
 
-    def generate(self, prompt, duration=6,
-                 ref_image_1=None, ref_image_2=None, ref_image_3=None,
-                 ref_image_4=None, reference_images=None,
-                 aspect_ratio="(預設)", resolution="(預設)",
-                 poll_timeout=VIDEO_POLL_TIMEOUT):
+    def generate(self, reference_images, prompt, duration,
+                 aspect_ratio=None, resolution=None, poll_timeout=None):
+        # INPUT_IS_LIST:所有參數都以 list 進來,純量參數取第一個
+        prompt = prompt[0]
+        duration = duration[0]
+        aspect_ratio = (aspect_ratio or ["(預設)"])[0]
+        resolution = (resolution or ["(預設)"])[0]
+        poll_timeout = (poll_timeout or [VIDEO_POLL_TIMEOUT])[0]
+
         try:
             api = GrokAPI()
 
-            # 收集參考圖:獨立輸入孔(各取整個 batch)→ 批次輸入,總上限 8
+            # reference_images 是 tensor list(各項尺寸可不同,各項本身是 batch)
             b64_list = []
-            for idx, single in enumerate(
-                    (ref_image_1, ref_image_2, ref_image_3, ref_image_4), 1):
-                if single is None:
+            for idx, tensor in enumerate(reference_images or [], 1):
+                if tensor is None:
                     continue
-                if float(single.max()) == 0.0:
-                    print(f"⚠️ ref_image_{idx} 是全黑圖(疑似上游合批失敗的"
+                if float(tensor.max()) == 0.0:
+                    print(f"⚠️ 第 {idx} 項參考圖是全黑圖(疑似上游合批失敗的"
                           f" zero tensor),仍照送但請檢查上游")
-                b64_list += media_utils.batch_to_png_b64_list(
-                    single, limit=MAX_REFERENCE_IMAGES - len(b64_list))
-            if reference_images is not None and len(b64_list) < MAX_REFERENCE_IMAGES:
-                if float(reference_images.max()) == 0.0:
-                    print("⚠️ reference_images batch 是全黑圖(疑似上游合批失敗"
-                          "的 zero tensor),仍照送但請檢查上游")
-                b64_list += media_utils.batch_to_png_b64_list(
-                    reference_images, limit=MAX_REFERENCE_IMAGES - len(b64_list))
+                remain = MAX_REFERENCE_IMAGES - len(b64_list)
+                if remain <= 0:
+                    print(f"⚠️ 參考圖超過 {MAX_REFERENCE_IMAGES} 張上限,其餘略過")
+                    break
+                b64_list += media_utils.batch_to_png_b64_list(tensor, limit=remain)
             if not b64_list:
-                raise RuntimeError(
-                    "沒有任何參考圖:請接 ref_image_1~4(單張,尺寸不限)"
-                    "或 reference_images(同尺寸 batch)至少一個")
+                raise RuntimeError("沒有任何參考圖:reference_images 是空的")
 
             ref_urls = [f"data:image/png;base64,{b}" for b in b64_list]
             print(f"🖼️ 參考圖 {len(ref_urls)} 張(reference_images,不強制第一幀)")
@@ -452,6 +452,74 @@ class GrokVideoRefsNode:
             raise RuntimeError(str(e)) from e
         except GrokAPIError as e:
             raise RuntimeError(str(e)) from e
+
+
+class GrokMultiImageNode:
+    """
+    ComfyUI 節點:Grok 多圖上傳——介面仿 MultiImageLoader
+    (Upload Images / Remove All / 編號縮圖),輸出跨尺寸 image list,
+    一條線接「參考圖影片・多圖」的 reference_images 孔位
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image_paths": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "tooltip": "(由前端維護)每行一個 input 目錄相對路徑",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("image_list", "count")
+    OUTPUT_IS_LIST = (True, False)
+    FUNCTION = "load"
+    CATEGORY = CATEGORY_UTILS
+
+    def load(self, image_paths):
+        rels = [p.strip() for p in (image_paths or "").splitlines() if p.strip()]
+        tensors = media_utils.load_image_list(rels)
+        if not tensors:
+            raise RuntimeError("沒有可載入的圖片:請用節點上的「Upload Images」上傳")
+        print(f"🖼️ Grok 多圖上傳:載入 {len(tensors)} 張(各自原尺寸)")
+        return (tensors, len(tensors))
+
+
+class GrokImageListNode:
+    """
+    ComfyUI 節點:參考圖打包——多張不同尺寸的圖打包成 image list,
+    一條線接進參考圖影片節點的單一孔位(OUTPUT_IS_LIST)
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image_1": ("IMAGE", {"tooltip": "第 1 張(尺寸不限)"}),
+            },
+            "optional": {
+                f"image_{i}": ("IMAGE", {"tooltip": f"第 {i} 張(尺寸不限)"})
+                for i in range(2, MAX_REFERENCE_IMAGES + 1)
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image_list",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "collect"
+    CATEGORY = CATEGORY_UTILS
+
+    def collect(self, image_1, **kwargs):
+        images = [image_1]
+        for i in range(2, MAX_REFERENCE_IMAGES + 1):
+            img = kwargs.get(f"image_{i}")
+            if img is not None:
+                images.append(img)
+        print(f"📦 參考圖打包:{len(images)} 張(尺寸可各自不同)")
+        return (images,)
 
 
 # ======================
@@ -569,6 +637,8 @@ NODE_CLASS_MAPPINGS = {
     "GrokImageGenNode": GrokImageGenNode,
     "GrokVideoGenNode": GrokVideoGenNode,
     "GrokVideoRefsNode": GrokVideoRefsNode,
+    "GrokMultiImageNode": GrokMultiImageNode,
+    "GrokImageListNode": GrokImageListNode,
     "GrokTTSNode": GrokTTSNode,
     "GrokListModelsNode": GrokListModelsNode,
 }
@@ -579,6 +649,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GrokImageGenNode": "Grok Imagine 圖片生成 (xAI)",
     "GrokVideoGenNode": "Grok Imagine 影片生成 (xAI)",
     "GrokVideoRefsNode": "Grok Imagine 參考圖影片・多圖 (xAI)",
+    "GrokMultiImageNode": "Grok 多圖上傳 (Multi Image)",
+    "GrokImageListNode": "Grok 參考圖打包 (Image List)",
     "GrokTTSNode": "Grok Voice 文字轉語音 (xAI)",
     "GrokListModelsNode": "Grok 模型列表 (xAI)",
 }

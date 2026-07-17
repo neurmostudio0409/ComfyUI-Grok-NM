@@ -52,9 +52,10 @@ def _media_module():
 def test_node_mappings(pkg):
     assert set(pkg.NODE_CLASS_MAPPINGS) == {
         "GrokChatNode", "GrokVisionNode", "GrokImageGenNode",
-        "GrokVideoGenNode", "GrokVideoRefsNode", "GrokTTSNode",
-        "GrokListModelsNode",
+        "GrokVideoGenNode", "GrokVideoRefsNode", "GrokMultiImageNode",
+        "GrokImageListNode", "GrokTTSNode", "GrokListModelsNode",
     }
+    assert pkg.WEB_DIRECTORY == "./web"
     assert set(pkg.NODE_DISPLAY_NAME_MAPPINGS) == set(pkg.NODE_CLASS_MAPPINGS)
 
 
@@ -145,27 +146,55 @@ def test_submit_video_image_payload_is_imageurl_struct(pkg):
     assert "image" not in captured
 
 
-def test_refs_node_independent_inputs(pkg):
-    """多圖節點:每張參考圖獨立輸入孔(尺寸不限),batch 為可選"""
+def test_refs_node_single_list_socket(pkg):
+    """多圖節點:單一孔位 reference_images + INPUT_IS_LIST(吃 batch 或跨尺寸 list)"""
     node = pkg.NODE_CLASS_MAPPINGS["GrokVideoRefsNode"]
+    assert node.INPUT_IS_LIST is True
     it = node.INPUT_TYPES()
-    for k in ("ref_image_1", "ref_image_2", "ref_image_3", "ref_image_4",
-              "reference_images"):
-        assert k in it["optional"], k
-        assert it["optional"][k][0] == "IMAGE"
-    assert "reference_images" not in it["required"]
+    assert it["required"]["reference_images"][0] == "IMAGE"
+    # 不再有獨立孔
+    assert not any(k.startswith("ref_image_") for k in it.get("optional", {}))
 
 
 def test_refs_node_requires_at_least_one_image(pkg):
-    """完全沒接參考圖要拋清楚錯誤(需 torch 環境以外也可跑:不進 API)"""
+    """空 list 要拋清楚錯誤(INPUT_IS_LIST:純量參數包成 list 傳入)"""
     import os as _os
     _os.environ["XAI_API_KEY"] = "dummy-key"
     try:
         node = pkg.NODE_CLASS_MAPPINGS["GrokVideoRefsNode"]()
         with pytest.raises(RuntimeError, match="沒有任何參考圖"):
-            node.generate("t", duration=1)
+            node.generate([], ["t"], [1])
     finally:
         _os.environ.pop("XAI_API_KEY", None)
+
+
+def test_multi_image_node(pkg):
+    """多圖上傳:OUTPUT_IS_LIST=(True,False),空清單拋明確錯誤,web/js 存在"""
+    node_cls = pkg.NODE_CLASS_MAPPINGS["GrokMultiImageNode"]
+    assert node_cls.OUTPUT_IS_LIST == (True, False)
+    assert node_cls.RETURN_TYPES == ("IMAGE", "INT")
+    it = node_cls.INPUT_TYPES()
+    assert it["required"]["image_paths"][0] == "STRING"
+    with pytest.raises(RuntimeError, match="Upload Images"):
+        node_cls().load("")
+    with pytest.raises(RuntimeError, match="Upload Images"):
+        node_cls().load("missing/not_exist_1.png\nmissing/not_exist_2.png")
+    assert os.path.exists(os.path.join(ROOT, "web", "js", "grok_multi_image.js"))
+
+
+def test_image_list_node(pkg):
+    """參考圖打包:OUTPUT_IS_LIST,不同尺寸物件原樣進 list"""
+    node_cls = pkg.NODE_CLASS_MAPPINGS["GrokImageListNode"]
+    assert node_cls.OUTPUT_IS_LIST == (True,)
+    it = node_cls.INPUT_TYPES()
+    assert it["required"]["image_1"][0] == "IMAGE"
+    assert set(it["optional"]) == {f"image_{i}" for i in range(2, 9)}
+    a, b = object(), object()  # 尺寸不同的 tensor 替身
+    out = node_cls().collect(a, image_2=b)
+    assert out == ([a, b],)
+    # 空缺的孔要被跳過
+    out2 = node_cls().collect(a, image_5=b)
+    assert out2 == ([a, b],)
 
 
 def test_submit_video_reference_images_payload(pkg):

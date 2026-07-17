@@ -43,7 +43,7 @@ jobs:
       - name: Build package zip
         run: |
           mkdir -p dist/ComfyUI-Grok-NM
-          cp -r __init__.py config modules requirements.txt README.md install_requirements.bat dist/ComfyUI-Grok-NM/
+          cp -r __init__.py config modules web requirements.txt README.md install_requirements.bat dist/ComfyUI-Grok-NM/
           rm -f dist/ComfyUI-Grok-NM/config/.env
           cd dist && zip -r ComfyUI-Grok-NM-${{ github.ref_name }}.zip ComfyUI-Grok-NM
 

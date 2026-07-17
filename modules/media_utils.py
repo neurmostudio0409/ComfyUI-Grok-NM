@@ -105,6 +105,43 @@ def items_to_image_batch(items: list):
     return torch.cat(aligned, dim=0)
 
 
+def load_image_list(rel_paths: list) -> list:
+    """
+    input 目錄相對路徑列表 → tensor list(各自尺寸,不合批不縮放)。
+    找不到的檔案略過並警告;先確認有檔案才 import torch(CI 無 torch 安全)。
+    """
+    try:
+        import folder_paths
+        base = folder_paths.get_input_directory()
+    except Exception:
+        base = ""
+
+    paths = []
+    for rel in rel_paths:
+        path = rel if os.path.isabs(rel) else os.path.join(base, rel)
+        if os.path.exists(path):
+            paths.append(path)
+        else:
+            print(f"⚠️ 找不到圖片 {path},略過")
+    if not paths:
+        return []
+
+    try:
+        import numpy as np
+        import torch
+        from PIL import Image, ImageOps
+    except ImportError as e:
+        print(f"⚠️ 缺少 torch/PIL,無法載入圖片: {e}")
+        return []
+
+    tensors = []
+    for path in paths:
+        pil = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+        arr = np.asarray(pil).astype(np.float32) / 255.0
+        tensors.append(torch.from_numpy(arr).unsqueeze(0))
+    return tensors
+
+
 # ----------------------------------------------------------------------
 # 音訊:bytes → ComfyUI AUDIO dict(不落地)
 # ----------------------------------------------------------------------
