@@ -353,9 +353,6 @@ class GrokVideoRefsNode:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "reference_images": ("IMAGE", {
-                    "tooltip": f"參考圖 batch,全部送出(最多 {MAX_REFERENCE_IMAGES} 張)",
-                }),
                 "prompt": ("STRING", {
                     "default": "",
                     "multiline": True,
@@ -367,6 +364,15 @@ class GrokVideoRefsNode:
                 }),
             },
             "optional": {
+                # 每張參考圖一個獨立輸入孔:不同尺寸的圖不用先合批
+                # (ComfyUI IMAGE batch 要求同尺寸,上游合批失敗會吐黑圖)
+                "ref_image_1": ("IMAGE", {"tooltip": "參考圖 1(單獨輸入,尺寸不限)"}),
+                "ref_image_2": ("IMAGE", {"tooltip": "參考圖 2"}),
+                "ref_image_3": ("IMAGE", {"tooltip": "參考圖 3"}),
+                "ref_image_4": ("IMAGE", {"tooltip": "參考圖 4"}),
+                "reference_images": ("IMAGE", {
+                    "tooltip": f"(可選)同尺寸參考圖 batch,與上面併用,總上限 {MAX_REFERENCE_IMAGES} 張",
+                }),
                 "aspect_ratio": (["(預設)"] + ASPECT_RATIOS, {
                     "default": "(預設)",
                 }),
@@ -386,14 +392,36 @@ class GrokVideoRefsNode:
     FUNCTION = "generate"
     CATEGORY = CATEGORY_VIDEO
 
-    def generate(self, reference_images, prompt, duration=6,
+    def generate(self, prompt, duration=6,
+                 ref_image_1=None, ref_image_2=None, ref_image_3=None,
+                 ref_image_4=None, reference_images=None,
                  aspect_ratio="(預設)", resolution="(預設)",
                  poll_timeout=VIDEO_POLL_TIMEOUT):
         try:
             api = GrokAPI()
 
-            b64_list = media_utils.batch_to_png_b64_list(
-                reference_images, limit=MAX_REFERENCE_IMAGES)
+            # 收集參考圖:獨立輸入孔(各取整個 batch)→ 批次輸入,總上限 8
+            b64_list = []
+            for idx, single in enumerate(
+                    (ref_image_1, ref_image_2, ref_image_3, ref_image_4), 1):
+                if single is None:
+                    continue
+                if float(single.max()) == 0.0:
+                    print(f"⚠️ ref_image_{idx} 是全黑圖(疑似上游合批失敗的"
+                          f" zero tensor),仍照送但請檢查上游")
+                b64_list += media_utils.batch_to_png_b64_list(
+                    single, limit=MAX_REFERENCE_IMAGES - len(b64_list))
+            if reference_images is not None and len(b64_list) < MAX_REFERENCE_IMAGES:
+                if float(reference_images.max()) == 0.0:
+                    print("⚠️ reference_images batch 是全黑圖(疑似上游合批失敗"
+                          "的 zero tensor),仍照送但請檢查上游")
+                b64_list += media_utils.batch_to_png_b64_list(
+                    reference_images, limit=MAX_REFERENCE_IMAGES - len(b64_list))
+            if not b64_list:
+                raise RuntimeError(
+                    "沒有任何參考圖:請接 ref_image_1~4(單張,尺寸不限)"
+                    "或 reference_images(同尺寸 batch)至少一個")
+
             ref_urls = [f"data:image/png;base64,{b}" for b in b64_list]
             print(f"🖼️ 參考圖 {len(ref_urls)} 張(reference_images,不強制第一幀)")
 

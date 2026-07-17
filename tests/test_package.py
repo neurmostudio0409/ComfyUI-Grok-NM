@@ -145,6 +145,29 @@ def test_submit_video_image_payload_is_imageurl_struct(pkg):
     assert "image" not in captured
 
 
+def test_refs_node_independent_inputs(pkg):
+    """多圖節點:每張參考圖獨立輸入孔(尺寸不限),batch 為可選"""
+    node = pkg.NODE_CLASS_MAPPINGS["GrokVideoRefsNode"]
+    it = node.INPUT_TYPES()
+    for k in ("ref_image_1", "ref_image_2", "ref_image_3", "ref_image_4",
+              "reference_images"):
+        assert k in it["optional"], k
+        assert it["optional"][k][0] == "IMAGE"
+    assert "reference_images" not in it["required"]
+
+
+def test_refs_node_requires_at_least_one_image(pkg):
+    """完全沒接參考圖要拋清楚錯誤(需 torch 環境以外也可跑:不進 API)"""
+    import os as _os
+    _os.environ["XAI_API_KEY"] = "dummy-key"
+    try:
+        node = pkg.NODE_CLASS_MAPPINGS["GrokVideoRefsNode"]()
+        with pytest.raises(RuntimeError, match="沒有任何參考圖"):
+            node.generate("t", duration=1)
+    finally:
+        _os.environ.pop("XAI_API_KEY", None)
+
+
 def test_submit_video_reference_images_payload(pkg):
     """多張參考圖:reference_images 為 {"url": ...} 物件陣列(官方規格)"""
     api = _api_module()

@@ -10,7 +10,7 @@ ComfyUI 的 xAI Grok API 整合套件:文字對話、視覺理解、Grok Imagine
 | Grok Vision 視覺理解 | `AI/Grok/vision` | IMAGE + 提示詞 → 文字描述(batch 最多 8 張,單張 20 MiB 上限) |
 | Grok Imagine 圖片生成 | `AI/Grok/image` | 文生圖,單次最多 10 張,回傳 IMAGE batch |
 | Grok Imagine 影片生成 | `AI/Grok/video` | 文生 / 圖生影片(單張 `first_frame` 強制第一幀),非同步輪詢,輸出 `VIDEO` 型別 |
-| Grok Imagine 參考圖影片・多圖 | `AI/Grok/video` | **多張參考圖**(IMAGE batch 全數送出,最多 8 張)引導風格、不強制第一幀;僅 `grok-imagine-video` 支援 |
+| Grok Imagine 參考圖影片・多圖 | `AI/Grok/video` | **多張參考圖**:`ref_image_1~4` 獨立輸入孔(**尺寸不限,免合批**)+ 可選同尺寸 batch,總上限 8 張;引導風格、不強制第一幀;僅 `grok-imagine-video` 支援 |
 | Grok Voice 文字轉語音 | `AI/Grok/audio` | TTS(eve/ara/leo/rex/sal + custom voice),輸出 `AUDIO` 型別 |
 | Grok 模型列表 | `AI/Grok/utils` | 查詢帳戶可用模型(`GET /models`) |
 
