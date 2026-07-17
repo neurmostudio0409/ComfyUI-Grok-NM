@@ -10,3 +10,4 @@ dist/
 # 本機工具設定,不入版控
 .claude/
 .mcp.json
+.playwright-mcp/
