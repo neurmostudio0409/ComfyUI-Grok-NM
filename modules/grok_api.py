@@ -179,8 +179,14 @@ class GrokAPI:
     # ------------------------------------------------------------------
     def submit_video(self, prompt: str, model: str, image_data_url: str = "",
                      duration: int = 6, aspect_ratio: str = "",
-                     resolution: str = "") -> str:
-        """送出影片生成請求,回傳 request_id"""
+                     resolution: str = "",
+                     reference_image_urls: list = None) -> str:
+        """
+        送出影片生成請求,回傳 request_id
+        image_data_url:單張 i2v(強制第一幀);
+        reference_image_urls:多張參考圖(影響風格,不強制第一幀,
+        僅 grok-imagine-video 支援)
+        """
         if not 1 <= duration <= MAX_VIDEO_DURATION_SEC:
             raise GrokAPIError(
                 f"duration 必須介於 1~{MAX_VIDEO_DURATION_SEC} 秒,收到 {duration}")
@@ -190,6 +196,9 @@ class GrokAPI:
             # xAI 要求 ImageUrl 結構(2026-07-17 實測 422:
             # "expected struct ImageUrl"),不能送純字串
             payload["image"] = {"url": image_data_url}
+        if reference_image_urls:
+            payload["reference_images"] = [
+                {"url": u} for u in reference_image_urls]
         if aspect_ratio:
             payload["aspect_ratio"] = aspect_ratio
         if resolution:

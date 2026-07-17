@@ -85,6 +85,7 @@ TTS_OUTPUT_FORMAT = {"codec": "wav", "sample_rate": 24000}
 # ----------------------------------------------------------------------
 MAX_IMAGES_PER_REQUEST = 10        # /images/generations 單次上限
 MAX_VIDEO_DURATION_SEC = 15        # 影片長度上限(秒)
+MAX_REFERENCE_IMAGES = 8           # 參考圖生影片軟上限(官方未明訂,範例最多 3)
 MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024  # 視覺輸入單張上限 20 MiB
 
 ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]

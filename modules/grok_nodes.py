@@ -25,6 +25,7 @@ from ..config.settings import (
     DEFAULT_CHAT_MODELS,
     IMAGE_MODELS,
     MAX_IMAGES_PER_REQUEST,
+    MAX_REFERENCE_IMAGES,
     MAX_TTS_TEXT_LENGTH,
     MAX_VIDEO_DURATION_SEC,
     TTS_SPEED_MAX,
@@ -342,6 +343,89 @@ class GrokVideoGenNode:
             raise RuntimeError(str(e)) from e
 
 
+class GrokVideoRefsNode:
+    """
+    ComfyUI 節點:Grok Imagine 參考圖影片(多張參考圖,官方 reference_images)
+    參考圖影響風格與內容但不強制第一幀;僅 grok-imagine-video 支援
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "reference_images": ("IMAGE", {
+                    "tooltip": f"參考圖 batch,全部送出(最多 {MAX_REFERENCE_IMAGES} 張)",
+                }),
+                "prompt": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "tooltip": "影片內容描述",
+                }),
+                "duration": ("INT", {
+                    "default": 6, "min": 1, "max": MAX_VIDEO_DURATION_SEC,
+                    "tooltip": f"影片長度(秒,上限 {MAX_VIDEO_DURATION_SEC})",
+                }),
+            },
+            "optional": {
+                "aspect_ratio": (["(預設)"] + ASPECT_RATIOS, {
+                    "default": "(預設)",
+                }),
+                "resolution": (["(預設)"] + VIDEO_RESOLUTIONS, {
+                    "default": "(預設)",
+                }),
+                "poll_timeout": ("FLOAT", {
+                    "default": VIDEO_POLL_TIMEOUT, "min": 60.0, "max": 3600.0,
+                    "tooltip": "輪詢逾時(秒)",
+                }),
+            },
+        }
+
+    # 模型固定 grok-imagine-video(1.5 不支援 reference_images)
+    RETURN_TYPES = ("VIDEO", "STRING")
+    RETURN_NAMES = ("video", "video_url")
+    FUNCTION = "generate"
+    CATEGORY = CATEGORY_VIDEO
+
+    def generate(self, reference_images, prompt, duration=6,
+                 aspect_ratio="(預設)", resolution="(預設)",
+                 poll_timeout=VIDEO_POLL_TIMEOUT):
+        try:
+            api = GrokAPI()
+
+            b64_list = media_utils.batch_to_png_b64_list(
+                reference_images, limit=MAX_REFERENCE_IMAGES)
+            ref_urls = [f"data:image/png;base64,{b}" for b in b64_list]
+            print(f"🖼️ 參考圖 {len(ref_urls)} 張(reference_images,不強制第一幀)")
+
+            ar = "" if aspect_ratio.startswith("(") else aspect_ratio
+            res = "" if resolution.startswith("(") else resolution
+
+            request_id = api.submit_video(
+                prompt, "grok-imagine-video",
+                duration=duration,
+                aspect_ratio=ar,
+                resolution=res,
+                reference_image_urls=ref_urls,
+            )
+            print(f"🚀 影片任務已送出 request_id={request_id}")
+
+            url = api.poll_video(request_id, timeout=poll_timeout)
+            dest = media_utils.make_video_temp_path(prefix="grok_refs_video")
+            api.download(url, dest)
+            video = media_utils.wrap_video(dest)
+
+            print("=" * 60)
+            print("✅ 參考圖影片生成完成!")
+            print(f"📁 暫存: {dest}(保存請接 Save Video 節點)")
+            print("=" * 60)
+            return (video, url)
+        except ValueError as e:
+            _print_api_key_help()
+            raise RuntimeError(str(e)) from e
+        except GrokAPIError as e:
+            raise RuntimeError(str(e)) from e
+
+
 # ======================
 # 音訊節點
 # ======================
@@ -456,6 +540,7 @@ NODE_CLASS_MAPPINGS = {
     "GrokVisionNode": GrokVisionNode,
     "GrokImageGenNode": GrokImageGenNode,
     "GrokVideoGenNode": GrokVideoGenNode,
+    "GrokVideoRefsNode": GrokVideoRefsNode,
     "GrokTTSNode": GrokTTSNode,
     "GrokListModelsNode": GrokListModelsNode,
 }
@@ -465,6 +550,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GrokVisionNode": "Grok Vision 視覺理解 (xAI)",
     "GrokImageGenNode": "Grok Imagine 圖片生成 (xAI)",
     "GrokVideoGenNode": "Grok Imagine 影片生成 (xAI)",
+    "GrokVideoRefsNode": "Grok Imagine 參考圖影片・多圖 (xAI)",
     "GrokTTSNode": "Grok Voice 文字轉語音 (xAI)",
     "GrokListModelsNode": "Grok 模型列表 (xAI)",
 }

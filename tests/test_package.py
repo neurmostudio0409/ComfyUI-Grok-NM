@@ -52,7 +52,8 @@ def _media_module():
 def test_node_mappings(pkg):
     assert set(pkg.NODE_CLASS_MAPPINGS) == {
         "GrokChatNode", "GrokVisionNode", "GrokImageGenNode",
-        "GrokVideoGenNode", "GrokTTSNode", "GrokListModelsNode",
+        "GrokVideoGenNode", "GrokVideoRefsNode", "GrokTTSNode",
+        "GrokListModelsNode",
     }
     assert set(pkg.NODE_DISPLAY_NAME_MAPPINGS) == set(pkg.NODE_CLASS_MAPPINGS)
 
@@ -141,6 +142,25 @@ def test_submit_video_image_payload_is_imageurl_struct(pkg):
     # 純文生影片不帶 image 欄位
     captured.clear()
     client.submit_video("t", "grok-imagine-video", duration=1)
+    assert "image" not in captured
+
+
+def test_submit_video_reference_images_payload(pkg):
+    """多張參考圖:reference_images 為 {"url": ...} 物件陣列(官方規格)"""
+    api = _api_module()
+    client = api.GrokAPI(api_key="dummy-key")
+    captured = {}
+
+    def fake_request(method, path, payload=None, timeout=None):
+        captured.update(payload)
+        return {"request_id": "rid-2"}
+
+    client._request = fake_request
+    urls = ["data:image/png;base64,QQ==", "data:image/png;base64,Qg=="]
+    client.submit_video("t", "grok-imagine-video", duration=1,
+                        reference_image_urls=urls)
+    assert captured["reference_images"] == [
+        {"url": urls[0]}, {"url": urls[1]}]
     assert "image" not in captured
 
 
