@@ -52,8 +52,9 @@ def _media_module():
 def test_node_mappings(pkg):
     assert set(pkg.NODE_CLASS_MAPPINGS) == {
         "GrokChatNode", "GrokVisionNode", "GrokImageGenNode",
-        "GrokVideoGenNode", "GrokVideoRefsNode", "GrokMultiImageNode",
-        "GrokImageListNode", "GrokTTSNode", "GrokListModelsNode",
+        "GrokImageEditNode", "GrokVideoGenNode", "GrokVideoRefsNode",
+        "GrokMultiImageNode", "GrokImageListNode", "GrokTTSNode",
+        "GrokListModelsNode",
     }
     assert pkg.WEB_DIRECTORY == "./web"
     assert set(pkg.NODE_DISPLAY_NAME_MAPPINGS) == set(pkg.NODE_CLASS_MAPPINGS)
@@ -166,6 +167,45 @@ def test_refs_node_requires_at_least_one_image(pkg):
             node.generate([], ["t"], [1])
     finally:
         _os.environ.pop("XAI_API_KEY", None)
+
+
+def test_edit_images_payload(pkg):
+    """圖片編輯 payload:單圖用 image、多圖用 images 陣列,項目含 type"""
+    api = _api_module()
+    client = api.GrokAPI(api_key="dummy-key")
+    captured = {}
+
+    def fake_request(method, path, payload=None, timeout=None):
+        captured.clear()
+        captured.update({"__path": path, **payload})
+        return {"data": [{"b64_json": "QQ=="}]}
+
+    client._request = fake_request
+    # 單圖 → image
+    client.edit_images("p", ["data:image/png;base64,QQ=="], "grok-imagine-image-quality")
+    assert captured["__path"] == "/images/edits"
+    assert captured["image"] == {"url": "data:image/png;base64,QQ==",
+                                 "type": "image_url"}
+    assert "images" not in captured
+    # 多圖 → images 陣列
+    client.edit_images("p", ["u1", "u2"], "grok-imagine-image-quality")
+    assert captured["images"] == [{"url": "u1", "type": "image_url"},
+                                  {"url": "u2", "type": "image_url"}]
+    assert "image" not in captured
+    # 超過 3 張 / 空清單要擋
+    with pytest.raises(api.GrokAPIError):
+        client.edit_images("p", ["a", "b", "c", "d"], "m")
+    with pytest.raises(api.GrokAPIError):
+        client.edit_images("p", [], "m")
+
+
+def test_edit_node_single_list_socket(pkg):
+    """編輯節點:單一 images 孔位 + INPUT_IS_LIST"""
+    node = pkg.NODE_CLASS_MAPPINGS["GrokImageEditNode"]
+    assert node.INPUT_IS_LIST is True
+    it = node.INPUT_TYPES()
+    assert it["required"]["images"][0] == "IMAGE"
+    assert node.RETURN_TYPES == ("IMAGE",)
 
 
 def test_multi_image_node(pkg):

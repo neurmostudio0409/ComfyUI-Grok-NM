@@ -24,6 +24,7 @@ from ..config.settings import (
     CATEGORY_VISION,
     DEFAULT_CHAT_MODELS,
     IMAGE_MODELS,
+    MAX_EDIT_IMAGES,
     MAX_IMAGES_PER_REQUEST,
     MAX_REFERENCE_IMAGES,
     MAX_TTS_TEXT_LENGTH,
@@ -343,6 +344,86 @@ class GrokVideoGenNode:
             raise RuntimeError(str(e)) from e
 
 
+class GrokImageEditNode:
+    """
+    ComfyUI 節點:Grok Imagine 圖片編輯——單/多圖輸入(官方 /images/edits)
+    單一 images 孔位(INPUT_IS_LIST):同尺寸 batch 或跨尺寸 image list 都吃,
+    來源圖上限 3 張(官方明訂);多圖 = 多來源合成編輯
+    """
+
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {
+                    "tooltip": "來源圖(單一孔位):單張直接接;多張經"
+                               "「Grok 多圖上傳 / 參考圖打包」接入"
+                               f"(官方上限 {MAX_EDIT_IMAGES} 張)",
+                }),
+                "prompt": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "tooltip": "編輯指令(例:改成鉛筆素描 / 把 A 圖角色放進 B 圖場景)",
+                }),
+                "model": (IMAGE_MODELS, {
+                    "default": IMAGE_MODELS[1] if len(IMAGE_MODELS) > 1 else IMAGE_MODELS[0],
+                    "tooltip": "編輯建議用 grok-imagine-image-quality",
+                }),
+            },
+            "optional": {
+                "n": ("INT", {
+                    "default": 1, "min": 1, "max": MAX_IMAGES_PER_REQUEST,
+                    "tooltip": "產生變化數",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "edit"
+    CATEGORY = CATEGORY_IMAGE
+
+    def edit(self, images, prompt, model, n=None):
+        # INPUT_IS_LIST:所有參數都以 list 進來,純量取第一個
+        prompt = prompt[0]
+        model = model[0]
+        n = (n or [1])[0]
+
+        try:
+            api = GrokAPI()
+
+            b64_sources = []
+            for tensor in images or []:
+                if tensor is None:
+                    continue
+                if float(tensor.max()) == 0.0:
+                    print("⚠️ 有來源圖是全黑圖(疑似上游合批失敗的 zero tensor)")
+                remain = MAX_EDIT_IMAGES - len(b64_sources)
+                if remain <= 0:
+                    print(f"⚠️ 來源圖超過官方上限 {MAX_EDIT_IMAGES} 張,其餘略過")
+                    break
+                b64_sources += media_utils.batch_to_png_b64_list(tensor, limit=remain)
+            if not b64_sources:
+                raise RuntimeError("沒有任何來源圖")
+
+            urls = [f"data:image/png;base64,{b}" for b in b64_sources]
+            print(f"🖌️ 圖片編輯:{len(urls)} 張來源圖,model={model}")
+
+            items = api.edit_images(prompt, urls, model, n=n)
+            batch = media_utils.items_to_image_batch(items)
+            print("=" * 60)
+            print(f"✅ Grok 圖片編輯完成({batch.shape[0]} 張)")
+            print("=" * 60)
+            return (batch,)
+        except ValueError as e:
+            _print_api_key_help()
+            raise RuntimeError(str(e)) from e
+        except GrokAPIError as e:
+            raise RuntimeError(str(e)) from e
+
+
 class GrokVideoRefsNode:
     """
     ComfyUI 節點:Grok Imagine 參考圖影片(多張參考圖,官方 reference_images)
@@ -635,6 +716,7 @@ NODE_CLASS_MAPPINGS = {
     "GrokChatNode": GrokChatNode,
     "GrokVisionNode": GrokVisionNode,
     "GrokImageGenNode": GrokImageGenNode,
+    "GrokImageEditNode": GrokImageEditNode,
     "GrokVideoGenNode": GrokVideoGenNode,
     "GrokVideoRefsNode": GrokVideoRefsNode,
     "GrokMultiImageNode": GrokMultiImageNode,
@@ -647,6 +729,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GrokChatNode": "Grok Chat 文字對話 (xAI)",
     "GrokVisionNode": "Grok Vision 視覺理解 (xAI)",
     "GrokImageGenNode": "Grok Imagine 圖片生成 (xAI)",
+    "GrokImageEditNode": "Grok Imagine 圖片編輯・單/多圖 (xAI)",
     "GrokVideoGenNode": "Grok Imagine 影片生成 (xAI)",
     "GrokVideoRefsNode": "Grok Imagine 參考圖影片・多圖 (xAI)",
     "GrokMultiImageNode": "Grok 多圖上傳 (Multi Image)",

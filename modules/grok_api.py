@@ -15,6 +15,7 @@ import requests
 
 from ..config.settings import (
     HTTP_STATUS_HINTS,
+    MAX_EDIT_IMAGES,
     MAX_IMAGES_PER_REQUEST,
     MAX_TTS_TEXT_LENGTH,
     MAX_VIDEO_DURATION_SEC,
@@ -172,6 +173,36 @@ class GrokAPI:
             results.append(item.get("b64_json") or item.get("url") or "")
         if not results:
             raise GrokAPIError(f"圖片生成回應沒有 data: {data}")
+        return results
+
+    def edit_images(self, prompt: str, image_urls: list, model: str,
+                    n: int = 1, response_format: str = "b64_json") -> list:
+        """
+        圖片編輯(POST /images/edits):單圖用 image 欄位、多圖用 images 陣列
+        (官方上限 3 張),每項 {"url": ..., "type": "image_url"}。
+        回傳 list(b64_json 字串或 URL)
+        """
+        if not image_urls:
+            raise GrokAPIError("圖片編輯需要至少 1 張來源圖")
+        if len(image_urls) > MAX_EDIT_IMAGES:
+            raise GrokAPIError(
+                f"圖片編輯來源圖上限 {MAX_EDIT_IMAGES} 張,收到 {len(image_urls)}")
+
+        payload = {"model": model, "prompt": prompt,
+                   "response_format": response_format}
+        if n > 1:
+            payload["n"] = n
+        items = [{"url": u, "type": "image_url"} for u in image_urls]
+        if len(items) == 1:
+            payload["image"] = items[0]
+        else:
+            payload["images"] = items
+
+        data = self._request("POST", "/images/edits", payload)
+        results = [item.get("b64_json") or item.get("url") or ""
+                   for item in (data.get("data") or [])]
+        if not results:
+            raise GrokAPIError(f"圖片編輯回應沒有 data: {data}")
         return results
 
     # ------------------------------------------------------------------
