@@ -69,3 +69,8 @@ GitHub Actions 於 push / PR 自動跑測試;推 `v*` tag 自動打包 zip 發 R
 ## API 路由
 
 - `GET /grok/models` — 回傳帳戶可用模型列表(供前端 / 除錯使用)
+
+## 授權 License
+
+本專案採用 [GNU General Public License v3.0](LICENSE) 授權。
+This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
