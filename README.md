@@ -21,6 +21,11 @@ ComfyUI 的 xAI Grok API 整合套件:文字對話、視覺理解、Grok Imagine
 > `Prompt executed in 0.0x seconds`),沒有這個 widget 時,重複送出同一組提示詞
 > 會像是任務失敗,得改提示詞才跑得動。此值**不會送給 xAI**(這些端點沒有 seed
 > 參數),純粹用來讓快取失效;要重複拿同一個結果把控制改成 **fixed** 即可。
+>
+> 從 **API(`POST /prompt`)**送工作流時(例如中控系統排程送任務),不會經過
+> 前端,`control_after_generate` 不會換值。這五個節點另外實作了 `IS_CHANGED`:
+> 工作流沒帶 seed(或 seed = 0)時一律重新執行,不會被快取跳過;要沿用上一次
+> 的結果就帶同一個非 0 的 seed。
 
 > **設計原則:生成節點不自行保存。** 圖片輸出 `IMAGE`、影片輸出 `VIDEO`、語音輸出
 > `AUDIO`,請接下游 **Save Image / Save Video / Save Audio** 決定保存位置——
