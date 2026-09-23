@@ -15,6 +15,13 @@ ComfyUI 的 xAI Grok API 整合套件:文字對話、視覺理解、Grok Imagine
 | Grok Voice 文字轉語音 | `AI/Grok/audio` | TTS(eve/ara/leo/rex/sal + custom voice),輸出 `AUDIO` 型別 |
 | Grok 模型列表 | `AI/Grok/utils` | 查詢帳戶可用模型(`GET /models`) |
 
+> **任務種子(seed)。** 圖片生成 / 圖片編輯 / 影片生成 / 參考圖影片 / 語音合成
+> 都有一個 `seed` widget,控制設為 **randomize** 時每次送出佇列會自動換值。
+> ComfyUI 會把「輸入完全相同」的節點視為已完成而**跳過執行**(log 只看到
+> `Prompt executed in 0.0x seconds`),沒有這個 widget 時,重複送出同一組提示詞
+> 會像是任務失敗,得改提示詞才跑得動。此值**不會送給 xAI**(這些端點沒有 seed
+> 參數),純粹用來讓快取失效;要重複拿同一個結果把控制改成 **fixed** 即可。
+
 > **設計原則:生成節點不自行保存。** 圖片輸出 `IMAGE`、影片輸出 `VIDEO`、語音輸出
 > `AUDIO`,請接下游 **Save Image / Save Video / Save Audio** 決定保存位置——
 > 節點本身只把影片暫存在 ComfyUI temp 目錄,不會在 `output/` 產生重複檔案。

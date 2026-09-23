@@ -94,6 +94,28 @@ def _common_llm_options():
     }
 
 
+def _task_seed_input():
+    """送出型節點的「任務種子」widget。
+
+    ComfyUI 會快取「輸入完全相同」的節點:同一組提示詞重複送出時,第二次以後
+    根本不會執行(log 只看到 `Prompt executed in 0.0x seconds`),使用者看起來
+    就像任務失敗,非得去改提示詞才跑得動。
+
+    加一個 `control_after_generate` 的 seed widget,前端每次排進佇列後會自動
+    換一個值,節點的輸入就不一樣了,任務會真的重新送出。
+
+    這個值「不會」送給 xAI —— /images/generations、/videos/generations、
+    /audio/speech 都沒有 seed 參數,多送未知欄位曾經被 422 擋掉。純粹用來讓
+    ComfyUI 的快取失效。要重複拿同一個結果,把下方的控制改成 fixed 即可。
+    """
+    return ("INT", {
+        "default": 0, "min": 0, "max": 2**31 - 1,
+        "control_after_generate": True,
+        "tooltip": "任務種子:每次送出自動換一個值,讓相同提示詞也能重新生成"
+                   "(不會送給 API);要重複使用同一個結果請把控制改成 fixed",
+    })
+
+
 # ======================
 # Chat / Vision 節點
 # ======================
@@ -229,6 +251,7 @@ class GrokImageGenNode:
                     "default": "(預設)",
                     "tooltip": "長寬比,(預設) = 交給 API 決定",
                 }),
+                "seed": _task_seed_input(),
             },
         }
 
@@ -237,7 +260,8 @@ class GrokImageGenNode:
     FUNCTION = "generate"
     CATEGORY = CATEGORY_IMAGE
 
-    def generate(self, prompt, model, n=1, aspect_ratio="(預設)"):
+    def generate(self, prompt, model, n=1, aspect_ratio="(預設)", seed=0):
+        # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         try:
             api = GrokAPI()
             ar = "" if aspect_ratio.startswith("(") else aspect_ratio
@@ -294,6 +318,7 @@ class GrokVideoGenNode:
                     "default": VIDEO_POLL_TIMEOUT, "min": 60.0, "max": 3600.0,
                     "tooltip": "輪詢逾時(秒)",
                 }),
+                "seed": _task_seed_input(),
             },
         }
 
@@ -305,7 +330,8 @@ class GrokVideoGenNode:
 
     def generate(self, prompt, model, duration=6, first_frame=None,
                  aspect_ratio="(預設)", resolution="(預設)",
-                 poll_timeout=VIDEO_POLL_TIMEOUT):
+                 poll_timeout=VIDEO_POLL_TIMEOUT, seed=0):
+        # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         try:
             api = GrokAPI()
 
@@ -377,6 +403,7 @@ class GrokImageEditNode:
                     "default": 1, "min": 1, "max": MAX_IMAGES_PER_REQUEST,
                     "tooltip": "產生變化數",
                 }),
+                "seed": _task_seed_input(),
             },
         }
 
@@ -385,7 +412,8 @@ class GrokImageEditNode:
     FUNCTION = "edit"
     CATEGORY = CATEGORY_IMAGE
 
-    def edit(self, images, prompt, model, n=None):
+    def edit(self, images, prompt, model, n=None, seed=0):
+        # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         # INPUT_IS_LIST:所有參數都以 list 進來,純量取第一個
         prompt = prompt[0]
         model = model[0]
@@ -466,6 +494,7 @@ class GrokVideoRefsNode:
                     "default": VIDEO_POLL_TIMEOUT, "min": 60.0, "max": 3600.0,
                     "tooltip": "輪詢逾時(秒)",
                 }),
+                "seed": _task_seed_input(),
             },
         }
 
@@ -476,7 +505,9 @@ class GrokVideoRefsNode:
     CATEGORY = CATEGORY_VIDEO
 
     def generate(self, reference_images, prompt, duration,
-                 aspect_ratio=None, resolution=None, poll_timeout=None):
+                 aspect_ratio=None, resolution=None, poll_timeout=None,
+                 seed=None):
+        # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         # INPUT_IS_LIST:所有參數都以 list 進來,純量參數取第一個
         prompt = prompt[0]
         duration = duration[0]
@@ -638,6 +669,7 @@ class GrokTTSNode:
                     "step": 0.05,
                     "tooltip": f"語速 {TTS_SPEED_MIN}~{TTS_SPEED_MAX}",
                 }),
+                "seed": _task_seed_input(),
             },
         }
 
@@ -648,7 +680,8 @@ class GrokTTSNode:
     CATEGORY = CATEGORY_AUDIO
 
     def synthesize(self, text, voice_id, custom_voice_id="", language="auto",
-                   speed=1.0):
+                   speed=1.0, seed=0):
+        # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         try:
             api = GrokAPI()
             data = api.tts(
