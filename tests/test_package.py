@@ -346,3 +346,43 @@ def test_task_seed_is_not_sent_to_the_api(pkg):
         body = api_src.split(f"def {func}", 1)[1].split("\n    def ", 1)[0]
         assert '"seed"' not in body, (
             f"{func} 不應把 seed 送進 payload(xAI 這些端點沒有 seed 參數)")
+
+
+# ----------------------------------------------------------------------
+# IS_CHANGED:API 直送(沒有前端 control_after_generate)時也要重跑
+# ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("node_name", sorted(TASK_NODES))
+def test_task_nodes_rerun_when_no_seed(pkg, node_name):
+    """seed 為 0 / 沒帶時要回 NaN(每次都重跑)。
+
+    `control_after_generate` 只在 ComfyUI 網頁按 Queue 時換值;從 API
+    (`POST /prompt`)送同一份工作流 JSON 時 seed 不會變,少了 IS_CHANGED
+    就會被判定已完成——log 只有 `Prompt executed in 0.03 seconds`,
+    呼叫端拿到「任務完成但無輸出結果」。
+    """
+    import math
+
+    cls = pkg.NODE_CLASS_MAPPINGS[node_name]
+    assert hasattr(cls, "IS_CHANGED"), f"{node_name} 沒有 IS_CHANGED"
+    assert math.isnan(cls.IS_CHANGED()), f"{node_name} 沒帶 seed 時應回 NaN"
+    assert math.isnan(cls.IS_CHANGED(seed=0)), f"{node_name} seed=0 時應回 NaN"
+
+
+@pytest.mark.parametrize("node_name", sorted(TASK_NODES))
+def test_task_nodes_honour_an_explicit_seed(pkg, node_name):
+    """seed 有值時回該值:同一個 seed 重送沿用快取(省一次付費呼叫),換 seed 就重跑"""
+    cls = pkg.NODE_CLASS_MAPPINGS[node_name]
+    assert cls.IS_CHANGED(seed=123) == 123
+    assert cls.IS_CHANGED(seed=123) != cls.IS_CHANGED(seed=124)
+    # INPUT_IS_LIST 的節點拿到的是 list
+    assert cls.IS_CHANGED(seed=[123]) == 123
+
+
+def test_is_changed_tolerates_junk_seed(pkg):
+    """seed 是 None / 空字串 / 非數字時不能爆掉,一律當成「沒帶」"""
+    import math
+
+    cls = pkg.NODE_CLASS_MAPPINGS["GrokVideoGenNode"]
+    for junk in (None, "", "abc", [], [None]):
+        assert math.isnan(cls.IS_CHANGED(seed=junk)), junk

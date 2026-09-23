@@ -116,6 +116,34 @@ def _task_seed_input():
     })
 
 
+def _task_is_changed(seed):
+    """送出型節點的 IS_CHANGED:決定 ComfyUI 要不要重跑這個節點。
+
+    `control_after_generate` 只在 ComfyUI 網頁前端按 Queue 時才會換值。
+    從 API(`POST /prompt`)送進來的工作流——例如 NMRehab 中控系統——
+    送的是同一份 JSON,seed 永遠是同一個值,ComfyUI 就把節點判定為已完成:
+
+        [INFO] got prompt
+        [INFO] Prompt executed in 0.03 seconds     ← 根本沒執行
+
+    節點沒執行就沒有新輸出,呼叫端看到的是「任務完成但無輸出結果」,
+    畫面上的佔位縮圖也永遠等不到真正的檔案。
+
+    規則:
+    - seed 是 0 / 沒帶(API 直送、工作流 JSON 裡沒有這個欄位)→ 回 NaN。
+      NaN != NaN,ComfyUI 每次都會重跑,這正是外部 API 節點該有的行為。
+    - seed 有值 → 回該值。呼叫端自己換 seed 就重跑;刻意用同一個 seed
+      重送時沿用快取是合理的(省一次付費呼叫)。
+    """
+    if isinstance(seed, (list, tuple)):        # INPUT_IS_LIST 的節點拿到的是 list
+        seed = seed[0] if seed else 0
+    try:
+        seed = int(seed)
+    except (TypeError, ValueError):
+        seed = 0
+    return float(seed) if seed else float("nan")
+
+
 # ======================
 # Chat / Vision 節點
 # ======================
@@ -260,6 +288,10 @@ class GrokImageGenNode:
     FUNCTION = "generate"
     CATEGORY = CATEGORY_IMAGE
 
+    @classmethod
+    def IS_CHANGED(cls, seed=0, **kwargs):
+        return _task_is_changed(seed)
+
     def generate(self, prompt, model, n=1, aspect_ratio="(預設)", seed=0):
         # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
         try:
@@ -327,6 +359,10 @@ class GrokVideoGenNode:
     RETURN_NAMES = ("video", "video_url")
     FUNCTION = "generate"
     CATEGORY = CATEGORY_VIDEO
+
+    @classmethod
+    def IS_CHANGED(cls, seed=0, **kwargs):
+        return _task_is_changed(seed)
 
     def generate(self, prompt, model, duration=6, first_frame=None,
                  aspect_ratio="(預設)", resolution="(預設)",
@@ -411,6 +447,10 @@ class GrokImageEditNode:
     RETURN_NAMES = ("images",)
     FUNCTION = "edit"
     CATEGORY = CATEGORY_IMAGE
+
+    @classmethod
+    def IS_CHANGED(cls, seed=0, **kwargs):
+        return _task_is_changed(seed)
 
     def edit(self, images, prompt, model, n=None, seed=0):
         # seed 只負責讓 ComfyUI 的快取失效(見 _task_seed_input),不送給 API
@@ -503,6 +543,10 @@ class GrokVideoRefsNode:
     RETURN_NAMES = ("video", "video_url")
     FUNCTION = "generate"
     CATEGORY = CATEGORY_VIDEO
+
+    @classmethod
+    def IS_CHANGED(cls, seed=0, **kwargs):
+        return _task_is_changed(seed)
 
     def generate(self, reference_images, prompt, duration,
                  aspect_ratio=None, resolution=None, poll_timeout=None,
@@ -678,6 +722,10 @@ class GrokTTSNode:
     RETURN_NAMES = ("audio",)
     FUNCTION = "synthesize"
     CATEGORY = CATEGORY_AUDIO
+
+    @classmethod
+    def IS_CHANGED(cls, seed=0, **kwargs):
+        return _task_is_changed(seed)
 
     def synthesize(self, text, voice_id, custom_voice_id="", language="auto",
                    speed=1.0, seed=0):
