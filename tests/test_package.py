@@ -291,3 +291,58 @@ def test_tensor_roundtrip():
     back = media.b64_or_url_to_tensor(b64)
     assert back.shape == (1, 32, 48, 3)
     assert (back - img).abs().max().item() < 0.01
+
+
+# ----------------------------------------------------------------------
+# 任務種子(避開 ComfyUI 的相同輸入快取)
+# ----------------------------------------------------------------------
+
+# 會真的送任務出去、重複執行才有意義的節點
+TASK_NODES = {
+    "GrokImageGenNode": "generate",
+    "GrokVideoGenNode": "generate",
+    "GrokImageEditNode": "edit",
+    "GrokVideoRefsNode": "generate",
+    "GrokTTSNode": "synthesize",
+}
+
+
+@pytest.mark.parametrize("node_name,func_name", sorted(TASK_NODES.items()))
+def test_task_nodes_have_control_after_generate_seed(pkg, node_name, func_name):
+    """送出型節點都要有 control_after_generate 的 seed。
+
+    少了它,ComfyUI 會把「輸入完全相同」的節點當成已完成而跳過執行,
+    使用者重複送同一個提示詞時看起來就像任務失敗
+    (log 只有 `Prompt executed in 0.0x seconds`),非得改提示詞才跑得動。
+    """
+    cls = pkg.NODE_CLASS_MAPPINGS[node_name]
+    spec = cls.INPUT_TYPES()
+    seed = spec.get("optional", {}).get("seed") or spec.get("required", {}).get("seed")
+    assert seed is not None, f"{node_name} 沒有 seed widget"
+    assert seed[0] == "INT", f"{node_name} 的 seed 應該是 INT"
+    assert seed[1].get("control_after_generate") is True, (
+        f"{node_name} 的 seed 少了 control_after_generate,前端不會自動換值")
+
+
+@pytest.mark.parametrize("node_name,func_name", sorted(TASK_NODES.items()))
+def test_task_nodes_accept_seed_argument(pkg, node_name, func_name):
+    """INPUT_TYPES 宣告了 seed,執行函式就必須收得下,否則 ComfyUI 會 TypeError"""
+    import inspect
+
+    cls = pkg.NODE_CLASS_MAPPINGS[node_name]
+    assert cls.FUNCTION == func_name
+    params = inspect.signature(getattr(cls, func_name)).parameters
+    assert "seed" in params, f"{node_name}.{func_name}() 沒有收 seed 參數"
+
+
+def test_task_seed_is_not_sent_to_the_api(pkg):
+    """seed 只用來讓快取失效:影片 / 圖片 / 語音端點都沒有 seed 欄位"""
+    import inspect
+
+    api_src = inspect.getsource(_api_module())
+    for func in ("submit_video", "generate_images", "synthesize_speech"):
+        if f"def {func}" not in api_src:
+            continue
+        body = api_src.split(f"def {func}", 1)[1].split("\n    def ", 1)[0]
+        assert '"seed"' not in body, (
+            f"{func} 不應把 seed 送進 payload(xAI 這些端點沒有 seed 參數)")
