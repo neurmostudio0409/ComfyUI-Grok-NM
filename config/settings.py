@@ -97,6 +97,18 @@ VIDEO_POLL_INTERVAL = 5.0    # 秒
 VIDEO_POLL_TIMEOUT = 600.0   # 秒
 
 # ----------------------------------------------------------------------
+# 影片輸出儲存(Zero Data Retention 團隊帳號用)
+# ----------------------------------------------------------------------
+# ZDR 團隊下 xAI 不保存生成結果,影片必須 PUT 到呼叫方自備的 presigned
+# 網址。未設定時維持原本「xAI 代管下載網址」流程,非 ZDR 帳號不受影響。
+OUTPUT_STORAGE_MODES = ["off", "s3", "static"]
+OUTPUT_S3_DEFAULT_KEY_PREFIX = "grok-video/"
+OUTPUT_S3_DEFAULT_REGION = "auto"      # R2 用 auto;AWS S3 要填實際 region
+OUTPUT_S3_EXPIRES_DEFAULT = 900        # 秒,與 xAI 官方 Grok Build 預設一致
+OUTPUT_S3_EXPIRES_MIN = 60
+OUTPUT_S3_EXPIRES_MAX = 3600
+
+# ----------------------------------------------------------------------
 # HTTP 狀態碼提示
 # ----------------------------------------------------------------------
 HTTP_STATUS_HINTS = {
@@ -174,3 +186,50 @@ def get_api_key() -> str:
 def get_base_url() -> str:
     """取得 API Server 位置"""
     return (os.environ.get("XAI_API_URL") or DEFAULT_BASE_URL).rstrip("/")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_output_storage_mode() -> str:
+    """
+    影片輸出儲存模式:off / s3 / static
+
+    未設定或填了不認得的值一律當 off(走 xAI 代管下載網址的原路徑)。
+    """
+    mode = (os.environ.get("XAI_OUTPUT_STORAGE") or "off").strip().lower()
+    return mode if mode in OUTPUT_STORAGE_MODES else "off"
+
+
+def get_output_s3_config() -> dict:
+    """S3 相容儲存設定(AWS S3 / Cloudflare R2 / MinIO)"""
+    return {
+        "endpoint": (os.environ.get("XAI_OUTPUT_S3_ENDPOINT") or "").strip().rstrip("/"),
+        "bucket": (os.environ.get("XAI_OUTPUT_S3_BUCKET") or "").strip(),
+        "region": (os.environ.get("XAI_OUTPUT_S3_REGION") or "").strip()
+                  or OUTPUT_S3_DEFAULT_REGION,
+        "access_key_id": (os.environ.get("XAI_OUTPUT_S3_ACCESS_KEY_ID") or "").strip(),
+        "secret_access_key": os.environ.get("XAI_OUTPUT_S3_SECRET_ACCESS_KEY") or "",
+        "key_prefix": (os.environ.get("XAI_OUTPUT_S3_KEY_PREFIX") or "").strip()
+                      or OUTPUT_S3_DEFAULT_KEY_PREFIX,
+        "expires_secs": os.environ.get("XAI_OUTPUT_S3_EXPIRES_SECS")
+                        or OUTPUT_S3_EXPIRES_DEFAULT,
+        # R2 / MinIO 走 path-style;AWS S3 要 virtual-host 時設為 false
+        "force_path_style": _env_bool("XAI_OUTPUT_S3_FORCE_PATH_STYLE", True),
+    }
+
+
+def get_output_static_urls() -> tuple:
+    """
+    固定 presigned 網址(單次測試用),回傳 (upload_url, fetch_url)
+
+    同一組網址重複使用會互相覆蓋,正式用途請走 s3 模式。
+    """
+    return (
+        (os.environ.get("XAI_OUTPUT_UPLOAD_URL") or "").strip(),
+        (os.environ.get("XAI_OUTPUT_FETCH_URL") or "").strip(),
+    )

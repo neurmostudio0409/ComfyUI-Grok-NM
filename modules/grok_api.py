@@ -28,6 +28,7 @@ from ..config.settings import (
     get_api_key,
     get_base_url,
 )
+from . import output_storage
 
 
 class GrokAPIError(Exception):
@@ -41,6 +42,14 @@ class GrokAPIError(Exception):
         elif status:
             message = f"{message}(HTTP {status})"
         super().__init__(message)
+
+
+def _is_zdr_error(err: "GrokAPIError") -> bool:
+    """是否為 ZDR 團隊要求 output.upload_url 而被擋下的請求"""
+    if err.status not in (400, 403, 422):
+        return False
+    msg = str(err).lower()
+    return "upload_url" in msg or "zero data retention" in msg
 
 
 class GrokAPI:
@@ -87,7 +96,10 @@ class GrokAPI:
                 detail = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             except Exception:
                 detail = resp.text[:300]
-            raise GrokAPIError(f"{method} {path} 失敗: {detail}", status=resp.status_code)
+            # 錯誤內容可能回拋我們送出的 output.upload_url,先遮蔽簽章
+            raise GrokAPIError(f"{method} {path} 失敗: "
+                               f"{output_storage.scrub(detail)}",
+                               status=resp.status_code)
 
         try:
             return resp.json()
@@ -211,12 +223,15 @@ class GrokAPI:
     def submit_video(self, prompt: str, model: str, image_data_url: str = "",
                      duration: int = 6, aspect_ratio: str = "",
                      resolution: str = "",
-                     reference_image_urls: list = None) -> str:
+                     reference_image_urls: list = None,
+                     upload_url: str = "") -> str:
         """
         送出影片生成請求,回傳 request_id
         image_data_url:單張 i2v(強制第一幀);
         reference_image_urls:多張參考圖(影響風格,不強制第一幀,
         僅 grok-imagine-video 支援)
+        upload_url:自備的 presigned 上傳網址,xAI 會把成品 PUT 上去。
+        ZDR(Zero Data Retention)團隊帳號為必填,其他帳號留空即可。
         """
         if not 1 <= duration <= MAX_VIDEO_DURATION_SEC:
             raise GrokAPIError(
@@ -234,16 +249,35 @@ class GrokAPI:
             payload["aspect_ratio"] = aspect_ratio
         if resolution:
             payload["resolution"] = resolution
+        if upload_url:
+            payload["output"] = {"upload_url": upload_url}
 
-        data = self._request("POST", "/videos/generations", payload)
+        try:
+            data = self._request("POST", "/videos/generations", payload)
+        except GrokAPIError as e:
+            # 未設定自備儲存卻碰到 ZDR 團隊:xAI 原始訊息只說要
+            # output.upload_url,看不出該怎麼處理,換成可行動的指引
+            if not upload_url and _is_zdr_error(e):
+                raise GrokAPIError(
+                    "影片生成被 Zero Data Retention 政策擋下\n\n"
+                    f"{output_storage.zdr_setup_hint()}",
+                    status=e.status) from e
+            raise
         request_id = data.get("request_id") or data.get("id")
         if not request_id:
             raise GrokAPIError(f"影片生成回應沒有 request_id: {data}")
         return request_id
 
     def poll_video(self, request_id: str, timeout: float = VIDEO_POLL_TIMEOUT,
-                   interval: float = VIDEO_POLL_INTERVAL) -> str:
-        """輪詢直到 done,回傳影片 URL;failed/expired/逾時則拋錯"""
+                   interval: float = VIDEO_POLL_INTERVAL,
+                   expect_upload: bool = False) -> str:
+        """
+        輪詢直到 done,回傳影片 URL;failed/expired/逾時則拋錯
+
+        expect_upload=True 表示已用 output.upload_url 交付,此時 xAI 不保存
+        檔案、回應可能不含 video.url —— 那不是錯誤,回空字串讓呼叫端改從
+        自備儲存取回。
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             data = self._request("GET", f"/videos/{request_id}")
@@ -253,7 +287,7 @@ class GrokAPI:
                 video = data.get("video") or {}
                 url = video.get("url") if isinstance(video, dict) else None
                 url = url or data.get("url") or ""
-                if not url:
+                if not url and not expect_upload:
                     raise GrokAPIError(f"影片完成但回應沒有 video.url: {data}")
                 return url
             if status in ("failed", "expired"):
@@ -265,7 +299,10 @@ class GrokAPI:
         raise GrokAPIError(f"影片生成輪詢逾時({timeout:.0f}s),request_id={request_id}")
 
     def download(self, url: str, dest_path: str):
-        """串流下載檔案(影片 URL 不需 Authorization)"""
+        """
+        串流下載檔案(xAI 代管網址與自備儲存的 presigned 網址都不需
+        Authorization —— 刻意不帶,免得把 xAI token 送到自家 bucket)
+        """
         try:
             with requests.get(url, stream=True, timeout=self.timeout) as resp:
                 resp.raise_for_status()
@@ -273,7 +310,11 @@ class GrokAPI:
                     for chunk in resp.iter_content(chunk_size=1 << 20):
                         f.write(chunk)
         except requests.RequestException as e:
-            raise GrokAPIError(f"下載 {url} 失敗: {e}")
+            # presigned 網址含簽章,requests 的例外訊息會自己帶上完整網址,
+            # 兩處都要遮蔽才不會落進 ComfyUI log
+            safe = output_storage.mask_url(url)
+            raise GrokAPIError(
+                f"下載 {safe} 失敗: {output_storage.scrub(str(e))}")
 
     # ------------------------------------------------------------------
     # TTS(Voice API)
