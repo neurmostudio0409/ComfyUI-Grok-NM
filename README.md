@@ -55,6 +55,60 @@ API Key 從 [console.x.ai](https://console.x.ai) → **API Keys** 建立。
 影片為非同步 API:節點送出後自動輪詢 `GET /videos/{request_id}`,完成後下載到
 temp 暫存並包成 `VIDEO` 型別輸出(另附 `video_url`),保存交給下游 Save Video。
 
+## ZDR 團隊帳號(影片生成)
+
+如果影片節點回這個錯,代表你的 xAI **團隊**開了 Zero Data Retention:
+
+```
+Zero Data Retention teams must provide output.upload_url for video generation.
+```
+
+ZDR 下 xAI 不保存生成結果,所以沒有可供下載的代管網址,必須由呼叫方提供一個
+presigned 上傳網址讓 xAI 把成品 `PUT` 進去。**ZDR 是 team 層級設定,無法只對
+單一 API key 關閉** —— 同一份工作流換一把屬於 ZDR 團隊的 key 就會開始失敗。
+
+一般帳號不受影響,也不需要任何設定。
+
+### 二選一
+
+**(A) 關閉 ZDR** — 到 [console.x.ai](https://console.x.ai) 關掉該 team 的 ZDR,
+不必改任何設定。
+
+**(B) 自備 S3 相容儲存** — 在 `config/.env` 填:
+
+```env
+XAI_OUTPUT_STORAGE=s3
+XAI_OUTPUT_S3_ENDPOINT=https://xxxxxxxx.r2.cloudflarestorage.com
+XAI_OUTPUT_S3_BUCKET=grok-video-output
+XAI_OUTPUT_S3_REGION=auto
+XAI_OUTPUT_S3_ACCESS_KEY_ID=...
+XAI_OUTPUT_S3_SECRET_ACCESS_KEY=...
+```
+
+支援 AWS S3 / Cloudflare R2 / MinIO,全部設定項見 `config/.env.example`。
+填好後重啟 ComfyUI。
+
+運作方式:每次生成**各自**簽一組短效網址(預設 900 秒),影片存成
+`<key_prefix><日期>/<uuid>.mp4`。xAI PUT 完成後節點再從同一個位置取回,
+包成 `VIDEO` 輸出。
+
+### 安全說明
+
+- S3 金鑰只留在 `.env`,**只用於本機簽章,不會送給 xAI** —— 離開本機的只有
+  簽好的網址
+- 每次生成都是新的 object key(含 uuid4),presigned PUT **無法覆蓋**既有檔案
+- presigned 網址本身就是該物件的通行證,主控台只印 `s3://bucket/key`,簽章一律遮蔽
+- 但節點的 `video_url` 輸出在 ZDR 模式下是**含簽章的短效網址**。若把工作流
+  連輸出一起存檔或分享,該網址在有效期內可被他人取用 —— 需要長期保存請接
+  下游 Save Video,不要依賴這個字串
+- 簽章不包含 Content-Type(xAI PUT 時帶什麼 Content-Type 官方未公開,
+  簽進去會讓簽章失效)
+
+> **尚待實機驗證。** 本功能依官方文件與錯誤訊息實作,但開發時手上沒有 ZDR
+> 團隊帳號可測。SigV4 簽章已用 AWS 官方公開向量做單元測試釘住;真正未驗的是
+> xAI 端的行為 —— PUT 的 Content-Type、完成回應是否仍帶 `video.url`。
+> 程式兩種情況都處理:有 `video.url` 就用,沒有就從自備儲存取回。
+
 ## 結構
 
 ```
@@ -66,7 +120,8 @@ ComfyUI-Grok-NM/
 ├── modules/
 │   ├── grok_api.py        # xAI API 客戶端(chat/image/video/tts/models)
 │   ├── grok_nodes.py      # ComfyUI 節點
-│   └── media_utils.py     # IMAGE tensor ↔ base64、AUDIO 解碼、VIDEO 包裝
+│   ├── media_utils.py     # IMAGE tensor ↔ base64、AUDIO 解碼、VIDEO 包裝
+│   └── output_storage.py  # ZDR 自備輸出儲存(SigV4 presign,無額外依賴)
 └── tests/                 # pytest(不打網路、不需 torch)
 ```
 

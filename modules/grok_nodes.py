@@ -38,6 +38,7 @@ from ..config.settings import (
 )
 from .grok_api import GrokAPI, GrokAPIError
 from . import media_utils
+from . import output_storage
 
 # 全域變數:快取 chat 模型列表(避免每次開節點都打 API)
 _CACHED_CHAT_MODELS = None
@@ -380,25 +381,37 @@ class GrokVideoGenNode:
             ar = "" if aspect_ratio.startswith("(") else aspect_ratio
             res = "" if resolution.startswith("(") else resolution
 
+            target = output_storage.get_upload_target()
+            if target:
+                print(f"🔐 ZDR 自備輸出儲存: {target.label}")
+
             request_id = api.submit_video(
                 prompt, model,
                 image_data_url=image_data_url,
                 duration=duration,
                 aspect_ratio=ar,
                 resolution=res,
+                upload_url=target.upload_url if target else "",
             )
             print(f"🚀 影片任務已送出 request_id={request_id}")
 
-            url = api.poll_video(request_id, timeout=poll_timeout)
+            url = api.poll_video(request_id, timeout=poll_timeout,
+                                 expect_upload=bool(target))
+            # ZDR 下 xAI 不回下載網址,影片已直接 PUT 進自備儲存
+            fetch_url = url or (target.fetch_url if target else "")
+            if not fetch_url:
+                raise RuntimeError("影片回報完成但沒有任何可取回的位置")
             dest = media_utils.make_video_temp_path()
-            api.download(url, dest)
+            api.download(fetch_url, dest)
             video = media_utils.wrap_video(dest)
 
             print("=" * 60)
             print("✅ 影片生成完成!")
             print(f"📁 暫存: {dest}(保存請接 Save Video 節點)")
             print("=" * 60)
-            return (video, url)
+            return (video, fetch_url)
+        except output_storage.OutputStorageError as e:
+            raise RuntimeError(f"影片輸出儲存設定有問題: {e}") from e
         except ValueError as e:
             _print_api_key_help()
             raise RuntimeError(str(e)) from e
@@ -584,25 +597,37 @@ class GrokVideoRefsNode:
             ar = "" if aspect_ratio.startswith("(") else aspect_ratio
             res = "" if resolution.startswith("(") else resolution
 
+            target = output_storage.get_upload_target()
+            if target:
+                print(f"🔐 ZDR 自備輸出儲存: {target.label}")
+
             request_id = api.submit_video(
                 prompt, "grok-imagine-video",
                 duration=duration,
                 aspect_ratio=ar,
                 resolution=res,
                 reference_image_urls=ref_urls,
+                upload_url=target.upload_url if target else "",
             )
             print(f"🚀 影片任務已送出 request_id={request_id}")
 
-            url = api.poll_video(request_id, timeout=poll_timeout)
+            url = api.poll_video(request_id, timeout=poll_timeout,
+                                 expect_upload=bool(target))
+            # ZDR 下 xAI 不回下載網址,影片已直接 PUT 進自備儲存
+            fetch_url = url or (target.fetch_url if target else "")
+            if not fetch_url:
+                raise RuntimeError("影片回報完成但沒有任何可取回的位置")
             dest = media_utils.make_video_temp_path(prefix="grok_refs_video")
-            api.download(url, dest)
+            api.download(fetch_url, dest)
             video = media_utils.wrap_video(dest)
 
             print("=" * 60)
             print("✅ 參考圖影片生成完成!")
             print(f"📁 暫存: {dest}(保存請接 Save Video 節點)")
             print("=" * 60)
-            return (video, url)
+            return (video, fetch_url)
+        except output_storage.OutputStorageError as e:
+            raise RuntimeError(f"影片輸出儲存設定有問題: {e}") from e
         except ValueError as e:
             _print_api_key_help()
             raise RuntimeError(str(e)) from e
