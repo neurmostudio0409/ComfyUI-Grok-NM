@@ -319,7 +319,7 @@ def test_poll_video_tolerates_missing_url_only_in_upload_mode(storage):
         FakeAPI().poll_video("req-1", expect_upload=False)
 
 
-def test_zdr_400_without_storage_gets_actionable_error(storage):
+def test_zdr_400_without_storage_gets_actionable_error(storage, capsys):
     """未設定儲存時,xAI 的原始訊息要被換成可行動的指引"""
     api_mod = sys.modules[f"{PKG_NAME}.modules.grok_api"]
 
@@ -335,7 +335,16 @@ def test_zdr_400_without_storage_gets_actionable_error(storage):
 
     with pytest.raises(api_mod.GrokAPIError) as got:
         FakeAPI().submit_video("p", "m", duration=6)
-    assert "console.x.ai" in str(got.value)
+    msg = str(got.value)
+    # 例外訊息要一行講完:多行指引放進例外,節點那層再包一次、ComfyUI
+    # 又印一遍鏈結 traceback,同一段會洗三遍(#5)
+    assert len(msg.splitlines()) == 1, msg
+    assert "console.x.ai" in msg
+    assert "XAI_OUTPUT_STORAGE" in msg
+    # 完整指引只印一次到主控台
+    out = capsys.readouterr().out
+    assert out.count("console.x.ai") == 1
+    assert "XAI_OUTPUT_STORAGE=s3" in out
 
 
 def test_non_zdr_400_is_not_rewritten(storage):
