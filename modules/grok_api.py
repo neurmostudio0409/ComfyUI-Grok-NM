@@ -258,9 +258,14 @@ class GrokAPI:
             # 未設定自備儲存卻碰到 ZDR 團隊:xAI 原始訊息只說要
             # output.upload_url,看不出該怎麼處理,換成可行動的指引
             if not upload_url and _is_zdr_error(e):
+                # 指引十幾行,只印一次到主控台:塞進例外訊息的話,節點那層
+                # 還會再包一次 RuntimeError,ComfyUI 又印一遍鏈結 traceback,
+                # 同一段文字會洗三遍,錯誤彈窗也塞到看不出重點(#5)
+                print(output_storage.zdr_setup_hint())
                 raise GrokAPIError(
-                    "影片生成被 Zero Data Retention 政策擋下\n\n"
-                    f"{output_storage.zdr_setup_hint()}",
+                    "影片生成被 Zero Data Retention 政策擋下:請到 "
+                    "console.x.ai 關閉該 team 的 ZDR,或設定 "
+                    "XAI_OUTPUT_STORAGE 自備輸出儲存(完整指引見主控台)",
                     status=e.status) from e
             raise
         request_id = data.get("request_id") or data.get("id")
